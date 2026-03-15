@@ -43,7 +43,7 @@ from update import patch_hs, patch_ss, patch_movie_hs, patch_movie_ss, read_html
 
 # DoodStream — Hard Subs only
 DOODSTREAM_API_KEY  = os.environ.get("DOODSTREAM_API_KEY", "554366xrjxeza9m7e4m02v")
-HARD_SUB_FOLDER_ID  = os.environ.get("HARD_SUB_FOLDER_ID", "")
+HARD_SUB_FOLDER_ID  = os.environ.get("HARD_SUB_FOLDER_ID", "thzdkzl93o")
 
 # StreamP2P — Soft Subs only
 STREAMP2P_API_KEY   = os.environ.get("STREAMP2P_API_KEY", "2a82d855a5801d4f32c498f8")
