@@ -563,11 +563,11 @@ def upload_to_doodstream(file_path: str, title: str, folder_id: str = "") -> str
 
         try:
             with open(file_path, "rb") as fh:
-                data = {"api_key": DOODSTREAM_API_KEY}
+                data = {}
                 if folder_id:
                     data["fld_id"] = folder_id
                 resp = requests.post(
-                    server,
+                    f"{server}?key={DOODSTREAM_API_KEY}",
                     files={"file": (os.path.basename(file_path), fh, "video/mp4")},
                     data=data,
                     timeout=7200,
@@ -700,14 +700,22 @@ def hardsub(input_file: str, label: str) -> str | None:
             output,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
-        if result.returncode == 0 and os.path.exists(output):
-            size_mb = os.path.getsize(output) // (1024 * 1024)
+        size_mb = os.path.getsize(output) // (1024 * 1024) if os.path.exists(output) else 0
+        if result.returncode == 0 and size_mb > 10:
             print(f"  [ffmpeg] Hard-sub done ({size_mb} MB): {output}")
             return output
+        elif result.returncode == 0 and size_mb <= 10:
+            print(f"  [ffmpeg] Output too small ({size_mb} MB) — likely corrupt", file=sys.stderr)
         print(f"  [ffmpeg] Attempt failed (rc={result.returncode}):", file=sys.stderr)
         if result.stderr:
             print(f"  {result.stderr[-500:]}", file=sys.stderr)
 
+    # Clean up any partial output file left by failed attempts
+    if os.path.exists(output):
+        try:
+            os.remove(output)
+        except OSError:
+            pass
     print(f"  [ffmpeg] Hard-sub FAILED for {label}", file=sys.stderr)
     return None
 # ══════════════════════════════════════════════════════════════════════════════
@@ -796,14 +804,16 @@ def patch_html_batch(results: list) -> bool:
 def git_commit_push(results: list) -> None:
     ep_parts  = [str(n) for n, m, hs, ss in results if not m and (hs or ss)]
     mov_parts = [f"M{n}" for n, m, hs, ss in results if m     and (hs or ss)]
-    label     = ", ".join(sorted(ep_parts) + mov_parts) or "unknown"
+    label     = ", ".join(sorted(ep_parts, key=int) + mov_parts) or "unknown"
 
     try:
         subprocess.run(["git", "config", "user.email", "github-actions@github.com"], check=True)
         subprocess.run(["git", "config", "user.name",  "GitHub Actions"],             check=True)
         subprocess.run(["git", "add", HTML_FILE],                                     check=True)
         subprocess.run(["git", "commit", "-m", f"chore: add links for {label}"],      check=True)
-        subprocess.run(["git", "pull", "--rebase"],                                   check=False)
+        rebase = subprocess.run(["git", "pull", "--rebase"], capture_output=True, text=True)
+        if rebase.returncode != 0:
+            print(f"  Git rebase warning: {rebase.stderr.strip()}", file=sys.stderr)
         subprocess.run(["git", "push"],                                                check=True)
         print(f"\n  Git pushed: {label}")
     except subprocess.CalledProcessError as e:
