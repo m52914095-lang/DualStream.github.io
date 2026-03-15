@@ -58,6 +58,7 @@ MAGNET_LINKS        = os.environ.get("MAGNET_LINKS",        "").strip()
 CUSTOM_SEARCH       = os.environ.get("CUSTOM_SEARCH",       "").strip()
 NYAA_UPLOADER_URL   = os.environ.get("NYAA_UPLOADER_URL",   "").strip()
 MOVIE_MODE          = os.environ.get("MOVIE_MODE", "0").strip() == "1"
+SELECT_FILES        = os.environ.get("SELECT_FILES", "").strip()  # e.g. "32" / "32-35" / "32,40"
 
 # DoodStream title templates  — {ep} or {num}
 HS_TITLE_TPL        = os.environ.get("HS_TITLE_TPL",       "Detective Conan - {ep} HS")
@@ -267,7 +268,48 @@ def search_nyaa(episode: int) -> str | None:
 # DOWNLOADER  (aria2c with full BitTorrent options)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def download_magnet(magnet: str) -> list:
+def parse_select_files(raw: str) -> str:
+    """
+    Parse SELECT_FILES into an aria2c --select-file= string.
+
+    Formats accepted (same style as episode override):
+      "32"         -> "32"        single file
+      "32-35"      -> "32-35"     range of files
+      "32,40"      -> "32,40"     specific files
+      "32,40-42"   -> "32,40-42"  mixed
+      ""           -> ""          blank = download all files
+
+    aria2c accepts this string directly, e.g. --select-file=32,40-42
+    """
+    raw = raw.strip()
+    if not raw:
+        return ""
+
+    parts = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            halves = part.split("-", 1)
+            try:
+                start = int(halves[0].strip())
+                end   = int(halves[1].strip())
+                if start > end:
+                    start, end = end, start
+                parts.append(f"{start}-{end}")
+            except ValueError:
+                print(f"  WARNING: bad file range '{part}' — skipped", file=sys.stderr)
+        else:
+            try:
+                parts.append(str(int(part)))
+            except ValueError:
+                print(f"  WARNING: bad file index '{part}' — skipped", file=sys.stderr)
+
+    return ",".join(parts)
+
+
+def download_magnet(magnet: str, select_files: str = "") -> list:
     """
     Download a magnet with aria2c.
     Returns list of all new .mkv files found afterwards (recursive).
@@ -303,8 +345,11 @@ def download_magnet(magnet: str) -> list:
         "--disk-cache=64M",
         "--summary-interval=60",    # print progress every 60 s
         "--console-log-level=notice",
-        magnet,
     ]
+    if select_files:
+        cmd.append(f"--select-file={select_files}")
+        print(f"  File selection: {select_files}")
+    cmd.append(magnet)
 
     try:
         subprocess.run(cmd, check=True, timeout=7200)
@@ -715,7 +760,7 @@ def main() -> None:
         print(f"Batch mode: {len(magnets)} magnet(s) | Movie mode: {MOVIE_MODE}")
         for i, magnet in enumerate(magnets, 1):
             print(f"\n[{i}/{len(magnets)}] Downloading...")
-            new_files = download_magnet(magnet)
+            new_files = download_magnet(magnet, parse_select_files(SELECT_FILES))
             if not new_files:
                 print("  No valid .mkv files — skipping this magnet", file=sys.stderr)
             else:
@@ -736,7 +781,7 @@ def main() -> None:
             if not magnet:
                 not_found.append(ep)
                 continue
-            new_files = download_magnet(magnet)
+            new_files = download_magnet(magnet, parse_select_files(SELECT_FILES))
             if not new_files:
                 print(f"  No valid .mkv files for episode {ep}", file=sys.stderr)
             else:
