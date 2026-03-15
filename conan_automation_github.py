@@ -602,22 +602,96 @@ def upload_to_doodstream(file_path: str, title: str, folder_id: str = "") -> str
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _esc(path: str) -> str:
-    """Escape a file path for use inside ffmpeg's subtitles= filter value."""
+    """Escape a file path for use inside ffmpeg subtitles= filter."""
     p = path.replace("\\", "\\\\").replace("'", "\\'")
     return p.replace(":", "\\:").replace("[", "\\[").replace("]", "\\]")
 
 
+def _find_english_subtitle_index(input_file: str) -> int:
+    """
+    Use ffprobe to scan all subtitle streams and return the 0-based index
+    of the first English one.
+
+    Returns the index (e.g. 0, 1, 2) so ffmpeg can use:
+      subtitles=file.mkv:si=<index>
+
+    Falls back to 0 (first track) if:
+      - ffprobe is not available
+      - no subtitle stream is tagged as English
+      - ffprobe errors out for any reason
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "quiet",
+                "-print_format", "json",
+                "-show_streams",
+                "-select_streams", "s",   # subtitle streams only
+                input_file,
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            print("  [ffprobe] Non-zero exit — defaulting to subtitle index 0",
+                  file=sys.stderr)
+            return 0
+
+        import json
+        data    = json.loads(result.stdout)
+        streams = data.get("streams", [])
+
+        print(f"  [ffprobe] Found {len(streams)} subtitle stream(s):")
+        for i, s in enumerate(streams):
+            lang  = s.get("tags", {}).get("language", "und")
+            title = s.get("tags", {}).get("title", "")
+            codec = s.get("codec_name", "?")
+            print(f"    [{i}] lang={lang}  codec={codec}  title={title}")
+
+        # First pass: exact "eng" tag
+        for i, s in enumerate(streams):
+            lang = s.get("tags", {}).get("language", "").lower()
+            if lang == "eng":
+                print(f"  [ffprobe] Chose subtitle index {i} (language=eng)")
+                return i
+
+        # Second pass: title contains "english" (some files tag it this way)
+        for i, s in enumerate(streams):
+            title = s.get("tags", {}).get("title", "").lower()
+            if "english" in title or "eng" in title:
+                print(f"  [ffprobe] Chose subtitle index {i} (title contains english)")
+                return i
+
+        print("  [ffprobe] No English subtitle found — defaulting to index 0",
+              file=sys.stderr)
+        return 0
+
+    except Exception as e:
+        print(f"  [ffprobe] Error: {e} — defaulting to subtitle index 0",
+              file=sys.stderr)
+        return 0
+
+
 def hardsub(input_file: str, label: str) -> str | None:
     """
-    Burn ASS/SSA subtitles into the video using ffmpeg.
-    Tries two subtitle filter escape styles — one usually works.
+    Burn subtitles into video using ffmpeg.
+    Automatically picks the English subtitle track via ffprobe.
+    Falls back to track 0 if English isn't found.
     Output: conan_{label}_hs.mp4
     """
-    output = f"conan_{label}_hs.mp4"
-    print(f"  [ffmpeg] Hard-subbing -> {output}")
+    output    = f"conan_{label}_hs.mp4"
+    sub_index = _find_english_subtitle_index(input_file)
+    print(f"  [ffmpeg] Hard-subbing with subtitle index {sub_index} -> {output}")
 
-    for vf in [f"subtitles='{_esc(input_file)}'",
-               f"subtitles={_esc(input_file)}"]:
+    esc = _esc(input_file)
+
+    # si= selects subtitle stream by index (0-based within subtitle streams)
+    for vf in [
+        f"subtitles='{esc}':si={sub_index}",
+        f"subtitles={esc}:si={sub_index}",
+        # Final fallback: no si= (uses default track, in case si= causes issues)
+        f"subtitles='{esc}'",
+        f"subtitles={esc}",
+    ]:
         cmd = [
             "ffmpeg", "-y", "-i", input_file,
             "-vf", vf,
@@ -636,8 +710,6 @@ def hardsub(input_file: str, label: str) -> str | None:
 
     print(f"  [ffmpeg] Hard-sub FAILED for {label}", file=sys.stderr)
     return None
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # PER-FILE PROCESSING
 # ══════════════════════════════════════════════════════════════════════════════
