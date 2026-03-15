@@ -141,6 +141,7 @@ jobs:
 
           # ── MAGNETS ────────────────────────────────────────────────────
           MAGNET_LINKS:         ${{ github.event.inputs.magnet_links        || '' }}
+          SELECT_FILES:         ${{ github.event.inputs.select_files         || '' }}
 
           # ── EPISODES ───────────────────────────────────────────────────
           EPISODE_OVERRIDE:     ${{ github.event.inputs.episode_override    || '' }}
